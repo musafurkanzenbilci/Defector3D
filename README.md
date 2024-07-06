@@ -4,11 +4,190 @@ __Defector3D is a defect detection system for 3D printing process. People experi
 ![wrong_print3](https://github.com/musafurkanzenbilci/Defector3D/assets/123447782/f42c3eee-5f14-4d9f-ad19-ac724811177a)
 ![wrong_print2](https://github.com/musafurkanzenbilci/Defector3D/assets/123447782/f10ab483-60e8-4186-8441-04ec6bb862ce)
 
+
 ## Getting Started
 
-## Building the Defector3D
+1. Set up OctoPrint Server
+2. Connect Camera and setup MJEPG Stream
+3. Configure camera feed in OctoPrint
+4. `python3 main.py` to run the pipeline on the stream and control OctoPrint
 
-This part is to show how you can build the same step by step.
+
+## Guides
+### OctoPrint Setup
+
+To integrate OctoPrint with Defector3D, follow the steps below to set up OctoPrint with either a USB camera or a CSI camera on your Jetson Orin Nano.
+
+#### Setting Up OctoPrint
+
+1. **Update Your System**
+   ```sh
+   sudo apt update
+   sudo apt upgrade -y
+   ```
+
+2. **Install Dependencies**
+   ```sh
+   sudo apt install python3-pip python3-dev python3-virtualenv git libyaml-dev build-essential -y
+   ```
+
+3. **Create a Virtual Environment**
+   ```sh
+   mkdir ~/OctoPrint
+   cd ~/OctoPrint
+   python3 -m venv venv
+   ```
+
+4. **Activate the Virtual Environment**
+   ```sh
+   source venv/bin/activate
+   ```
+
+5. **Install OctoPrint**
+   ```sh
+   pip install octoprint
+   ```
+
+6. **Start OctoPrint**
+   ```sh
+   octoprint serve
+   ```
+
+   OctoPrint will be accessible at `http://localhost:5000`.
+
+#### Configure OctoPrint as a Service (Optional)
+
+1. **Create a Systemd Service File**
+   ```sh
+   sudo nano /etc/systemd/system/octoprint.service
+   ```
+
+2. **Add the Following Content**
+   ```ini
+   [Unit]
+   Description=OctoPrint
+   After=network.target
+
+   [Service]
+   User=your-username
+   ExecStart=/home/your-username/OctoPrint/venv/bin/octoprint serve
+   WorkingDirectory=/home/your-username/OctoPrint
+   Restart=always
+   Type=simple
+
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+3. **Reload systemd and Enable the Service**
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemctl enable octoprint
+   sudo systemctl start octoprint
+   ```
+
+4. **Check the Service Status**
+   ```sh
+   sudo systemctl status octoprint
+   ```
+
+
+
+### Octoprint API
+
+Octoprint is an open-source tool that provides you with the control of consumer 3D printers both over a web interface and an API.
+
+The requirements from the Octoprint for this project are:
+- Cancel printing
+- Reset print head to a safe space
+
+These can be done via the related endpoints or by sending related GCODES over the Octoprint API. GCODES are common to different 3D Printers and can be understood by them at a lower level.
+
+Example scripts using the API can be found under the `octo_api` folder.
+
+[Full Octoprint API documentation here](https://docs.octoprint.org/en/master/)
+
+
+### Camera Stream
+
+#### Setting Up a USB Camera
+
+1. **Install MJPG-Streamer**
+   ```sh
+   sudo apt-get install build-essential libjpeg8-dev imagemagick libv4l-dev cmake git -y
+   cd ~
+   git clone https://github.com/jacksonliam/mjpg-streamer.git
+   cd mjpg-streamer/mjpg-streamer-experimental
+   make
+   sudo make install
+   ```
+
+2. **Start MJPG-Streamer**
+   ```sh
+   ./mjpg_streamer -i "./input_uvc.so -d /dev/video0 -f 30 -r 640x480 -y" -o "./output_http.so -w ./www"
+   ```
+
+3. **Access the Stream**
+   ```
+   http://<your-jetson-ip>:8080/?action=stream
+   ```
+
+4. **Configure OctoPrint**
+   - Stream URL: `http://<your-jetson-ip>:8080/?action=stream`
+   - Snapshot URL: `http://<your-jetson-ip>:8080/?action=snapshot`
+
+#### Setting Up a CSI Camera
+
+1. **Test the Camera with GStreamer**
+   ```sh
+   gst-launch-1.0 nvarguscamerasrc ! nvoverlaysink
+   ```
+
+2. **Create and Run GStreamer Pipeline**
+   - Create `start_gst_pipeline.sh`
+     ```sh
+     #!/bin/bash
+     mkdir -p /tmp/stream
+     while true; do
+         gst-launch-1.0 nvarguscamerasrc ! 'video/x-raw(memory:NVMM),width=640,height=480,framerate=30/1' ! nvvidconv ! 'video/x-raw,format=I420' ! jpegenc ! multifilesink location=/tmp/stream/pic.jpg
+     done
+     ```
+   - Make the script executable
+     ```sh
+     chmod +x start_gst_pipeline.sh
+     ```
+
+3. **Create and Run MJPG-Streamer Script**
+   - Create `start_mjpg_streamer.sh`
+     ```sh
+     #!/bin/bash
+     mjpg_streamer -i "input_file.so -f /tmp/stream -n pic.jpg" -o "output_http.so -w ./www"
+     ```
+   - Make the script executable
+     ```sh
+     chmod +x start_mjpg_streamer.sh
+     ```
+
+4. **Run the Scripts**
+   - Open two terminals
+   - In the first terminal:
+     ```sh
+     ./start_gst_pipeline.sh
+     ```
+   - In the second terminal:
+     ```sh
+     ./start_mjpg_streamer.sh
+     ```
+
+5. **Access the Stream**
+   ```
+   http://<your-jetson-ip>:8080/?action=stream
+   ```
+
+6. **Configure OctoPrint**
+
+
+
 
 ### Training Your Model
 
@@ -41,20 +220,3 @@ These flags are not in the command because their default values are used.
 - `epochs`: By default, 100 epochs will be run. Since the dataset is not very large, it is enough. Remember to set the `patience` flag if you are planning to use higher numbers of epochs.
 
 In around 4-5 hours, the training process is completed. It can vary based on the dataset, model, and the parameters used.
-
-### Octoprint API
-
-Octoprint is an open-source tool that provides you with the control of consumer 3D printers both over a web interface and an API.
-
-The requirements from the Octoprint for this project are:
-- Cancel printing
-- Reset print head to a safe space
-
-These can be done via the related endpoints or by sending related GCODES over the Octoprint API. GCODES are common to different 3D Printers and can be understood by them at a lower level.
-
-Example scripts using the API can be found under the `octo_api` folder.
-
-[Full Octoprint API documentation here](https://docs.octoprint.org/en/master/)
-
-
-### Combining YOLOv5 with Octoprint
